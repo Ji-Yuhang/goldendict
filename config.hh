@@ -4,6 +4,7 @@
 #ifndef __CONFIG_HH_INCLUDED__
 #define __CONFIG_HH_INCLUDED__
 
+#include <QObject>
 #include <QVector>
 #include <QString>
 #include <QSize>
@@ -275,17 +276,20 @@ struct WebSite
   QString id, name, url;
   bool enabled;
   QString iconFilename;
+  bool inside_iframe;
 
   WebSite(): enabled( false )
   {}
 
   WebSite( QString const & id_, QString const & name_, QString const & url_,
-           bool enabled_, QString const & iconFilename_ ):
-    id( id_ ), name( name_ ), url( url_ ), enabled( enabled_ ), iconFilename( iconFilename_ ) {}
+           bool enabled_, QString const & iconFilename_, bool inside_iframe_ ):
+    id( id_ ), name( name_ ), url( url_ ), enabled( enabled_ ), iconFilename( iconFilename_ ),
+    inside_iframe( inside_iframe_ ) {}
 
   bool operator == ( WebSite const & other ) const
   { return id == other.id && name == other.name && url == other.url &&
-           enabled == other.enabled && iconFilename == other.iconFilename; }
+           enabled == other.enabled && iconFilename == other.iconFilename &&
+           inside_iframe == other.inside_iframe; }
 };
 
 /// All the WebSites
@@ -339,6 +343,30 @@ struct Hunspell
 /// All the MediaWikis
 typedef QVector< MediaWiki > MediaWikis;
 
+#ifdef MAKE_CHINESE_CONVERSION_SUPPORT
+/// Chinese transliteration configuration
+struct Chinese
+{
+  bool enable;
+
+  bool enableSCToTWConversion;
+  bool enableSCToHKConversion;
+  bool enableTCToSCConversion;
+
+  Chinese();
+
+  bool operator == ( Chinese const & other ) const
+  { return enable == other.enable &&
+           enableSCToTWConversion == other.enableSCToTWConversion &&
+           enableSCToHKConversion == other.enableSCToHKConversion &&
+           enableTCToSCConversion == other.enableTCToSCConversion; }
+
+  bool operator != ( Chinese const & other ) const
+  { return ! operator == ( other ); }
+
+};
+#endif
+
 /// Romaji transliteration configuration
 struct Romaji
 {
@@ -371,14 +399,20 @@ struct Transliteration
   bool enableGermanTransliteration;
   bool enableGreekTransliteration;
   bool enableBelarusianTransliteration;
+#ifdef MAKE_CHINESE_CONVERSION_SUPPORT
+  Chinese chinese;
+#endif
   Romaji romaji;
 
   bool operator == ( Transliteration const & other ) const
   { return enableRussianTransliteration == other.enableRussianTransliteration &&
-           romaji == other.romaji &&
            enableGermanTransliteration == other.enableGermanTransliteration &&
            enableGreekTransliteration == other.enableGreekTransliteration &&
-           enableBelarusianTransliteration == other.enableBelarusianTransliteration;
+           enableBelarusianTransliteration == other.enableBelarusianTransliteration &&
+#ifdef MAKE_CHINESE_CONVERSION_SUPPORT
+           chinese == other.chinese &&
+#endif
+           romaji == other.romaji;
   }
 
   bool operator != ( Transliteration const & other ) const
@@ -644,6 +678,11 @@ QString getLocDir() throw();
 
 /// Returns the directory storing program help files (.qch).
 QString getHelpDir() throw();
+
+#ifdef MAKE_CHINESE_CONVERSION_SUPPORT
+/// Returns the directory storing OpenCC configuration and dictionary files (.json and .ocd).
+QString getOpenCCDir() throw();
+#endif
 
 /// Returns true if the program is configured as a portable version. In that
 /// mode, all the settings and indices are kept in the program's directory.

@@ -38,10 +38,13 @@
 #include <QDir>
 #include <QPainter>
 #include <QDebug>
+#include <QRegExp>
 
 #include <QSemaphore>
 #include <QThreadPool>
 #include <QAtomicInt>
+
+#include "qt4x5.hh"
 
 namespace Xdxf {
 
@@ -68,7 +71,7 @@ DEF_EX_STR( exDictzipError, "DICTZIP error", Dictionary::Ex )
 enum
 {
   Signature = 0x46584458, // XDXF on little-endian, FXDX on big-endian
-  CurrentFormatVersion = 4 + BtreeIndexing::FormatVersion + Folding::Version
+  CurrentFormatVersion = 5 + BtreeIndexing::FormatVersion + Folding::Version
 };
 
 enum ArticleFormat
@@ -186,6 +189,9 @@ public:
               && !fts.disabledTypes.contains( "XDXF", Qt::CaseInsensitive )
               && ( fts.maxDictionarySize == 0 || getArticleCount() <= fts.maxDictionarySize );
   }
+
+  virtual uint32_t getFtsIndexVersion()
+  { return 1; }
 
 protected:
 
@@ -487,7 +493,7 @@ void XdxfArticleRequestRunnable::run()
 
 void XdxfArticleRequest::run()
 {
-  if ( isCancelled )
+  if ( Qt4x5::AtomicInt::loadAcquire( isCancelled ) )
   {
     finish();
     return;
@@ -514,7 +520,7 @@ void XdxfArticleRequest::run()
 
   for( unsigned x = 0; x < chain.size(); ++x )
   {
-    if ( isCancelled )
+    if ( Qt4x5::AtomicInt::loadAcquire( isCancelled ) )
     {
       finish();
       return;
@@ -658,7 +664,7 @@ void XdxfDictionary::loadArticle( uint32_t address,
   }
 
   articleText = Xdxf2Html::convert( string( articleBody ), Xdxf2Html::XDXF, idxHeader.hasAbrv ? &abrv : NULL, this,
-                                    fType == Logical, idxHeader.revisionNumber, headword );
+                                    &resourceZip, fType == Logical, idxHeader.revisionNumber, headword );
 
   free( articleBody );
 }
@@ -733,7 +739,32 @@ qint64 GzippedFile::readData( char * data, qint64 maxSize )
     maxSize = 1;
 
   // The returning value translates directly to QIODevice semantics
-  return gzread( gz, data, maxSize );
+  int n = gzread( gz, data, maxSize );
+
+#if QT_VERSION >= QT_VERSION_CHECK(5, 0, 0)
+  // With QT 5.x QXmlStreamReader ask one byte instead of one UTF-8 char.
+  // We read and return all bytes for char.
+
+  if( n == 1 )
+  {
+    char ch = *data;
+    int addBytes = 0;
+    if( ch & 0x80 )
+    {
+      if( ( ch & 0xF8 ) == 0xF0 )
+        addBytes = 3;
+      else if( ( ch & 0xF0 ) == 0xE0 )
+        addBytes = 2;
+      else if( ( ch & 0xE0 ) == 0xC0 )
+        addBytes = 1;
+    }
+
+    if( addBytes )
+      n += gzread( gz, data + 1, addBytes );
+  }
+#endif
+
+  return n;
 }
 
 char * GzippedFile::readDataArray( unsigned long startPos, unsigned long size )
@@ -755,21 +786,21 @@ QString readXhtmlData( QXmlStreamReader & stream )
     {
       QString name = stream.name().toString();
 
-      result += "<" + Qt::escape( name ) + " ";
+      result += "<" + Qt4x5::escape( name ) + " ";
 
       QXmlStreamAttributes attrs = stream.attributes();
 
       for( int x = 0; x < attrs.size(); ++x )
       {
-        result += Qt::escape( attrs[ x ].name().toString() );
-        result += "=\"" + Qt::escape( attrs[ x ].value().toString() ) + "\"";
+        result += Qt4x5::escape( attrs[ x ].name().toString() );
+        result += "=\"" + Qt4x5::escape( attrs[ x ].value().toString() ) + "\"";
       }
 
       result += ">";
 
       result += readXhtmlData( stream );
 
-      result += "</" + Qt::escape( name ) + ">";
+      result += "</" + Qt4x5::escape( name ) + ">";
     }
     else
     if ( stream.isCharacters() || stream.isWhitespace() || stream.isCDATA() )
@@ -990,7 +1021,7 @@ void XdxfResourceRequestRunnable::run()
 void XdxfResourceRequest::run()
 {
   // Some runnables linger enough that they are cancelled before they start
-  if ( isCancelled )
+  if ( Qt4x5::AtomicInt::loadAcquire( isCancelled ) )
   {
     finish();
     return;
@@ -1208,7 +1239,10 @@ vector< sptr< Dictionary::Class > > makeDictionaries(
               idxHeader.langTo = LangCoder::findIdForLanguageCode3( str.c_str() );
 
               bool isLogical = ( stream.attributes().value( "format" ) == "logical" );
-              idxHeader.revisionNumber = stream.attributes().value( "revision" ).toString().toUInt();
+
+              QRegExp regNum( "\\d+" );
+              regNum.indexIn( stream.attributes().value( "revision" ).toString() );
+              idxHeader.revisionNumber = regNum.cap().toUInt();
 
               idxHeader.articleFormat = isLogical ? Logical : Visual;
 
